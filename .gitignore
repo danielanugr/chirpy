@@ -1,0 +1,13 @@
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+out/
+build/
+dist/
+
+*.tmp
+*.temp
+*.log
