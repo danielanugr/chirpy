@@ -181,11 +181,9 @@ func TestValidateJWT(t *testing.T) {
 	tokenSecret := "test-secret"
 	expiresIn := time.Hour
 
-	// Create a token
 	token, err := MakeJWT(userID, tokenSecret, expiresIn)
 	require.NoError(t, err)
 
-	// Validate the token
 	extractedUserID, err := ValidateJWT(token, tokenSecret)
 	require.NoError(t, err)
 	require.Equal(t, userID, extractedUserID)
@@ -195,11 +193,9 @@ func TestValidateJWTExpiredToken(t *testing.T) {
 	userID := uuid.New()
 	tokenSecret := "test-secret"
 
-	// Create an expired token
-	token, err := MakeJWT(userID, tokenSecret, -time.Hour) // Negative duration = already expired
+	token, err := MakeJWT(userID, tokenSecret, -time.Hour)
 	require.NoError(t, err)
 
-	// Try to validate the expired token
 	_, err = ValidateJWT(token, tokenSecret)
 	require.Error(t, err)
 }
@@ -210,11 +206,9 @@ func TestValidateJWTWrongSecret(t *testing.T) {
 	wrongSecret := "wrong-secret"
 	expiresIn := time.Hour
 
-	// Create a token
 	token, err := MakeJWT(userID, tokenSecret, expiresIn)
 	require.NoError(t, err)
 
-	// Try to validate with wrong secret
 	_, err = ValidateJWT(token, wrongSecret)
 	require.Error(t, err)
 }
