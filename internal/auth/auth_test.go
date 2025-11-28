@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -211,4 +212,93 @@ func TestValidateJWTWrongSecret(t *testing.T) {
 
 	_, err = ValidateJWT(token, wrongSecret)
 	require.Error(t, err)
+}
+
+func TestGetBearerToken(t *testing.T) {
+	tests := []struct {
+		name          string
+		headers       http.Header
+		expectedToken string
+		expectedError bool
+	}{
+		{
+			name: "Valid Bearer token",
+			headers: http.Header{
+				"Authorization": []string{"Bearer mysecrettoken123"},
+			},
+			expectedToken: "mysecrettoken123",
+			expectedError: false,
+		},
+		{
+			name: "Missing Authorization header",
+			headers: http.Header{
+				"Content-Type": []string{"application/json"},
+			},
+			expectedToken: "",
+			expectedError: true,
+		},
+		{
+			name: "Empty Authorization header",
+			headers: http.Header{
+				"Authorization": []string{""},
+			},
+			expectedToken: "",
+			expectedError: true,
+		},
+		{
+			name: "Invalid format - missing Bearer prefix",
+			headers: http.Header{
+				"Authorization": []string{"mysecrettoken123"},
+			},
+			expectedToken: "",
+			expectedError: true,
+		},
+		{
+			name: "Invalid format - wrong prefix",
+			headers: http.Header{
+				"Authorization": []string{"Token mysecrettoken123"},
+			},
+			expectedToken: "",
+			expectedError: true,
+		},
+		{
+			name: "Invalid format - too many parts",
+			headers: http.Header{
+				"Authorization": []string{"Bearer my secret token"},
+			},
+			expectedToken: "",
+			expectedError: true,
+		},
+		{
+			name: "Valid token with special characters",
+			headers: http.Header{
+				"Authorization": []string{"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"},
+			},
+			expectedToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+			expectedError: false,
+		},
+		{
+			name: "Valid token with whitespace",
+			headers: http.Header{
+				"Authorization": []string{"Bearer    token123    "},
+			},
+			expectedToken: "token123",
+			expectedError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := GetBearerToken(tt.headers)
+
+			if (err != nil) != tt.expectedError {
+				t.Errorf("GetBearerToken() error = %v, wantErr %v", err, tt.expectedError)
+				return
+			}
+
+			if !tt.expectedError && token != tt.expectedToken {
+				t.Errorf("GetBearerToken() = %v, want %v", token, tt.expectedToken)
+			}
+		})
+	}
 }
