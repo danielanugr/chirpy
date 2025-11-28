@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	platform       string
 	jwtSecret      string
+	polkaKey       string
 }
 
 type User struct {
@@ -87,6 +89,7 @@ func cleanBody(body string) string {
 	}
 	return strings.Join(words, " ")
 }
+
 func handleHealth(w http.ResponseWriter, req *http.Request) {
 	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -222,6 +225,12 @@ func (cfg *apiConfig) handleEditUser(w http.ResponseWriter, req *http.Request) {
 }
 
 func (cfg *apiConfig) handleUpdgradeUser(w http.ResponseWriter, req *http.Request) {
+	apiKeyString, err := auth.GetAPIKey(req.Header)
+	if err != nil || apiKeyString != cfg.polkaKey {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	type parameters struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -231,7 +240,7 @@ func (cfg *apiConfig) handleUpdgradeUser(w http.ResponseWriter, req *http.Reques
 
 	decoder := json.NewDecoder(req.Body)
 	body := parameters{}
-	err := decoder.Decode(&body)
+	err = decoder.Decode(&body)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("error decoding json: %v", err))
 		return
@@ -392,10 +401,34 @@ func (cfg *apiConfig) handleChirps(w http.ResponseWriter, req *http.Request) {
 }
 
 func (cfg *apiConfig) handleGetChirps(w http.ResponseWriter, req *http.Request) {
-	dbChirps, err := cfg.db.GetChirps(req.Context())
+	authorIDString := req.URL.Query().Get("author_id")
+	sortString := req.URL.Query().Get("sort")
+	authorID := uuid.Nil
+	var err error
+	if authorIDString != "" {
+		authorID, err = uuid.Parse(authorIDString)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Failed to parse authorID: %v", err))
+			return
+		}
+	}
+
+	var dbChirps []database.Chirp
+
+	if authorID == uuid.Nil {
+		dbChirps, err = cfg.db.GetChirps(req.Context())
+	} else {
+		dbChirps, err = cfg.db.GetChirpsByAuthor(req.Context(), authorID)
+	}
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to retrieve chirps :%v", err))
 		return
+	}
+
+	if sortString == "desc" {
+		sort.Slice(dbChirps, func(i, j int) bool {
+			return dbChirps[i].CreatedAt.After(dbChirps[j].CreatedAt)
+		})
 	}
 
 	var chirps []Chirp
@@ -536,6 +569,7 @@ func main() {
 		db:        dbQueries,
 		platform:  os.Getenv("PLATFORM"),
 		jwtSecret: os.Getenv("JWT_SECRET"),
+		polkaKey:  os.Getenv("POLKA_KEY"),
 	}
 
 	mux := http.NewServeMux()
