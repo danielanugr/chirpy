@@ -7,6 +7,10 @@ package database
 
 import (
 	"context"
+	"database/sql"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -43,6 +47,32 @@ func (q *Queries) DeleteAllUsers(ctx context.Context) error {
 	return err
 }
 
+const editUser = `-- name: EditUser :one
+UPDATE users
+SET email = $1, hashed_password = $2, updated_at = NOW()
+WHERE id = $3
+RETURNING id, created_at, updated_at, email, hashed_password
+`
+
+type EditUserParams struct {
+	Email          string
+	HashedPassword string
+	ID             uuid.UUID
+}
+
+func (q *Queries) EditUser(ctx context.Context, arg EditUserParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, editUser, arg.Email, arg.HashedPassword, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Email,
+		&i.HashedPassword,
+	)
+	return i, err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, created_at, updated_at, email, hashed_password FROM users WHERE email = $1
 `
@@ -54,6 +84,45 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.ID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Email,
+		&i.HashedPassword,
+	)
+	return i, err
+}
+
+const getUserByRefreshToken = `-- name: GetUserByRefreshToken :one
+SELECT rt.token, rt.created_at, rt.updated_at, rt.user_id, rt.expires_at, rt.revoked_at, u.id, u.created_at, u.updated_at, u.email, u.hashed_password FROM refresh_tokens rt
+JOIN users u ON rt.user_id = u.id
+WHERE rt.token = $1 AND rt.revoked_at IS NULL AND rt.expires_at > NOW()
+`
+
+type GetUserByRefreshTokenRow struct {
+	Token          string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	UserID         uuid.UUID
+	ExpiresAt      time.Time
+	RevokedAt      sql.NullTime
+	ID             uuid.UUID
+	CreatedAt_2    time.Time
+	UpdatedAt_2    time.Time
+	Email          string
+	HashedPassword string
+}
+
+func (q *Queries) GetUserByRefreshToken(ctx context.Context, token string) (GetUserByRefreshTokenRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserByRefreshToken, token)
+	var i GetUserByRefreshTokenRow
+	err := row.Scan(
+		&i.Token,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.ID,
+		&i.CreatedAt_2,
+		&i.UpdatedAt_2,
 		&i.Email,
 		&i.HashedPassword,
 	)
