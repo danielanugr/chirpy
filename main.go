@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/danielanugr/chirpy/internal/auth"
 	"github.com/danielanugr/chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -121,23 +122,36 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, req *http.Request) {
 
 func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
 	body := parameters{}
 	err := decoder.Decode(&body)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error decoding json: %v", err))
+		return
 	}
 
 	if len(body.Email) == 0 {
 		respondWithError(w, http.StatusBadRequest, "Email cannot be empty")
+		return
 	}
 
-	dbUser, err := cfg.db.CreateUser(req.Context(), body.Email)
+	hashedPassword, err := auth.HashPassword(body.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Something went wrong: %v", err))
+		return
+	}
+
+	dbUser, err := cfg.db.CreateUser(req.Context(), database.CreateUserParams{
+		Email:          body.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create user: %v", err))
+		return
 	}
 
 	user := User{
@@ -146,8 +160,51 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, req *http.Request)
 		UpdatedAt: dbUser.UpdatedAt,
 		Email:     dbUser.Email,
 	}
-
 	respondWithJSON(w, http.StatusCreated, user)
+}
+
+func (cfg *apiConfig) handleLogin(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	body := parameters{}
+	err := decoder.Decode(&body)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error decoding json: %v", err))
+		return
+	}
+
+	if len(body.Email) == 0 || len(body.Password) == 0 {
+		respondWithError(w, http.StatusBadRequest, "Email and password cannot be empty")
+	}
+
+	dbUser, err := cfg.db.GetUserByEmail(req.Context(), body.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Email/Password incorrect")
+		return
+	}
+
+	match, err := auth.CheckPasswordHash(body.Password, dbUser.HashedPassword)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error checking password : %v", err))
+		return
+	}
+
+	if !match {
+		respondWithError(w, http.StatusUnauthorized, "Email/Password incorrect")
+		return
+	}
+
+	user := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     body.Email,
+	}
+	respondWithJSON(w, http.StatusOK, user)
 }
 
 func (cfg *apiConfig) handleChirps(w http.ResponseWriter, req *http.Request) {
@@ -223,6 +280,31 @@ func (cfg *apiConfig) handleGetChirps(w http.ResponseWriter, req *http.Request) 
 	respondWithJSON(w, http.StatusOK, chirps)
 }
 
+func (cfg *apiConfig) handleGetChirp(w http.ResponseWriter, req *http.Request) {
+	params := req.PathValue("chirpID")
+	chirpID, err := uuid.Parse(params)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Falief to parse chirp id: %v", err))
+		return
+	}
+
+	dbChirp, err := cfg.db.GetChirp(req.Context(), chirpID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, fmt.Sprintf("Chirp not found: %v", err))
+		return
+	}
+
+	chirp := Chirp{
+		ID:        dbChirp.ID,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+		Body:      dbChirp.Body,
+		UserID:    dbChirp.UserID,
+	}
+
+	respondWithJSON(w, http.StatusOK, chirp)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -247,6 +329,8 @@ func main() {
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleChirps)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirp)
+	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
 
 	server := &http.Server{
 		Handler: mux,
